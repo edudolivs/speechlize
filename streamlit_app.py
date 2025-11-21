@@ -2,7 +2,9 @@ import streamlit as st
 import os
 import whisper
 import json
-from langchain_community.document_loaders import JSONLoader
+from datetime import timedelta
+from langchain_text_splitters import RecursiveCharacterTextSplitter           
+from langchain_community.document_loaders import TextLoader
 from langchain_chroma import Chroma
 from langchain_ollama.embeddings import OllamaEmbeddings
 from langchain_ollama.llms import OllamaLLM
@@ -26,8 +28,15 @@ def app():
 
     st.write("# Speechlize")
     st.sidebar.header("Settings")
+    TRANSCR = st.sidebar.selectbox(
+        "Escolha um modelo de transcrição do whisper:",
+        ["tiny", "base", "small", "medium", "large", "turbo"]
+    )
+    ENCODER = st.sidebar.selectbox("Escolha um modelo de embeddings:", st.session_state["models"])
     audio_file = st.sidebar.file_uploader("Escolha o arquivo de audio:", type="mp3")
-    MODEL = st.sidebar.selectbox("Escolha um modelo:", st.session_state["models"])
+    MODEL = st.sidebar.selectbox("Escolha um modelo de linguagem:", st.session_state["models"])
+    st.session_state["model"] = OllamaLLM(model=MODEL)
+
     if audio_file:
         audio_path = "tmp/audio.mp3"
 
@@ -41,32 +50,30 @@ def app():
 
         if "vectorstore" not in st.session_state or not st.session_state["vectorstore"]:
 
-            model = whisper.load_model("tiny")
+            model = whisper.load_model(TRANSCR)
             result = model.transcribe(audio_path)
-
-            json_path = "tmp/audio.json"
-            with open(json_path, 'w') as f:
-                f.write(json.dumps(result))
-                
-            def metadata_func(record, metadata):
-                metadata["timestamp"] = record.get("start")
-                return metadata
             
-            loader = JSONLoader(
-                file_path=json_path,
-                jq_schema='.segments[]',
-                content_key='text',
-                text_content=False,
-                metadata_func=metadata_func
+            text = ''
+            for segment in result["segments"]:
+                text += f"({timedelta(seconds=segment["start"])}): " # type: ignore
+                text += segment["text"] + "\n" # type: ignore
+
+            txt_path = "tmp/transcript.txt"
+            with open(txt_path, 'w') as f:
+                f.write(text)
+                
+            loader = TextLoader(
+                file_path=txt_path
             )
-            
-            data = loader.load()
-            
-            embeddings = OllamaEmbeddings(model="nomic-embed-text")
 
-            st.session_state["vectorstore"] = Chroma.from_documents(data, embeddings, persist_directory="chroma_db")
-                
-            st.session_state["model"] = OllamaLLM(model=MODEL)
+            doc = loader.load()
+            
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+            data = text_splitter.split_documents(doc)
+
+            embeddings = OllamaEmbeddings(model=ENCODER)
+
+            st.session_state["vectorstore"] = Chroma.from_documents(data, embeddings, persist_directory="tmp/chroma_db")
 
             system_prompt = """
                     Você é uma IA especialista em processos jurídicos.
@@ -123,6 +130,7 @@ def app():
         
     else:
         st.session_state["vectorstore"] = None
+        
             
 if __name__ == "__main__":
     app()
