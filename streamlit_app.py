@@ -9,11 +9,25 @@ from langchain_ollama.llms import OllamaLLM
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
+import ollama
 
 def app():
-    st.write("# RAG")
+    
+    st.set_page_config("Speechlize", layout="wide")
+    
+    if "models" not in st.session_state:
+        models = []
+        models_list = ollama.list()
+        if models_list and "models" in models_list:
+            for model in models_list["models"]:
+                models.append(model["model"])
+            st.session_state["models"] = models
+            
 
-    audio_file = st.file_uploader("Escolha o arquivo e espere a análise", type="mp3")
+    st.write("# Speechlize")
+    st.sidebar.header("Settings")
+    audio_file = st.sidebar.file_uploader("Escolha o arquivo de audio:", type="mp3")
+    MODEL = st.sidebar.selectbox("Escolha um modelo:", st.session_state["models"])
     if audio_file:
         audio_path = "tmp/audio.mp3"
 
@@ -52,16 +66,14 @@ def app():
 
             st.session_state["vectorstore"] = Chroma.from_documents(data, embeddings, persist_directory="chroma_db")
                 
-            st.session_state["llm"] = OllamaLLM(model="gemma3")
+            st.session_state["model"] = OllamaLLM(model=MODEL)
 
             system_prompt = """
                     Você é uma IA especialista em processos jurídicos.
-                    Seu papel é interpretar e discutir de forma clara e concisa transcrições de áudio de tribunais.
+                    Seu papel é interpretar e discutir de forma clara e concisa transcrições de áudios de tribunais.
                     Você deve responder as perguntas apenas com as informações da transcrição apresentada e interação anterior com o usuário.
-                    Você deve agir como expert sem mencionar qual é a sua função.
-                    You must always respond as a legal expert and avoid disclaiming your expertise.
                     Se uma resposta é desconhecida apenas avise e não faça especulações.
-                    Indique as timestamps de trechos que você mencionar nas suas respostas.
+                    Indique as marcações de tempo de trechos que você mencionar nas suas respostas.
 
                     Previous conversations:
                     {history}
@@ -98,7 +110,7 @@ def app():
                 context=context_doc_str
             )
             
-            llm_chain = { "input": RunnablePassthrough() } | qa_prompt_local  | st.session_state["llm"]
+            llm_chain = { "input": RunnablePassthrough() } | qa_prompt_local  | st.session_state["model"]
             
             result = llm_chain.invoke(user_input)
             
